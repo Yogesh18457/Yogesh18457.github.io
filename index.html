@@ -146,6 +146,10 @@
     border:1.5px solid var(--wire);color:var(--wire);transform:rotate(-2deg);margin-bottom:12px;font-weight:500;
   }
   .card.cat-research .stamp{border-color:var(--brick);color:var(--brick);}
+  .card img.dispatch-photo{
+    width:100%;height:auto;max-height:380px;object-fit:cover;
+    border-radius:8px;margin-bottom:16px;display:block;background:var(--paper);
+  }
   .card h2{font-family:'Fraunces',serif;font-weight:600;font-size:23px;margin:0 0 8px;line-height:1.2;}
   .byline{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--mute);margin-bottom:14px;letter-spacing:.02em;}
   .content{font-family:'Fraunces',serif;font-size:16px;line-height:1.65;color:#2B2A26;white-space:pre-wrap;}
@@ -200,46 +204,6 @@
 
 <div class="controls">
   <div class="chips" id="chips"></div>
-  <button class="new-btn" id="new-btn">+ File a dispatch</button>
-</div>
-
-<div class="form-panel" id="form-panel">
-  <div class="form-card">
-    <div class="hint">This site is static, so new posts publish in two steps: fill this out, then click "Add &amp; download posts.json." That downloads an updated file — upload it to your GitHub repo (replacing the old one) to make it live for visitors.</div>
-
-    <label for="f-title">Headline</label>
-    <input type="text" id="f-title" placeholder="What happened, in one line">
-
-    <div class="form-row">
-      <div>
-        <label for="f-category">Category</label>
-        <select id="f-category">
-          <option>News</option>
-          <option>Research</option>
-          <option>Analysis</option>
-          <option>Opinion</option>
-        </select>
-      </div>
-      <div>
-        <label for="f-author">Byline</label>
-        <input type="text" id="f-author" placeholder="Your name">
-      </div>
-    </div>
-
-    <label for="f-content">Report</label>
-    <textarea id="f-content" placeholder="Write the full report here..."></textarea>
-
-    <label for="f-source">Source link (optional)</label>
-    <input type="text" id="f-source" placeholder="https://...">
-
-    <div id="f-error" class="form-error" style="display:none;"></div>
-    <div id="f-success" class="form-success" style="display:none;"></div>
-
-    <div class="form-actions">
-      <button class="btn-secondary" id="cancel-btn">Cancel</button>
-      <button class="btn-primary" id="save-btn">Add &amp; download posts.json</button>
-    </div>
-  </div>
 </div>
 
 <div class="feed" id="feed"></div>
@@ -260,12 +224,6 @@
   const metaDate = document.getElementById('meta-date');
   const metaCount = document.getElementById('meta-count');
   const issueKicker = document.getElementById('issue-kicker');
-  const formPanel = document.getElementById('form-panel');
-  const newBtn = document.getElementById('new-btn');
-  const cancelBtn = document.getElementById('cancel-btn');
-  const saveBtn = document.getElementById('save-btn');
-  const errEl = document.getElementById('f-error');
-  const successEl = document.getElementById('f-success');
 
   const today = new Date();
   metaDate.textContent = today.toLocaleDateString(undefined,{weekday:'long', year:'numeric', month:'long', day:'numeric'});
@@ -286,15 +244,6 @@
     }
     loaded = true;
     render();
-  }
-
-  function downloadPostsJson(){
-    const blob = new Blob([JSON.stringify(posts, null, 2)], {type:'application/json'});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = 'posts.json'; document.body.appendChild(a); a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
   }
 
   function render(){
@@ -320,7 +269,7 @@
     if(!loaded) return;
 
     if(posts.length === 0){
-      feedEl.innerHTML = `<div class="empty"><h3>The wire is quiet</h3><p>No dispatches yet. File one above.</p></div>`;
+      feedEl.innerHTML = `<div class="empty"><h3>The wire is quiet</h3><p>No dispatches published yet. Check back soon.</p></div>`;
       return;
     }
     if(visible.length === 0){
@@ -331,15 +280,16 @@
     feedEl.innerHTML = visible.map(p => {
       const dateStr = new Date(p.date).toLocaleDateString(undefined,{month:'short', day:'numeric', year:'numeric'});
       const sourceHtml = p.sourceUrl ? `<br><a class="source-link" href="${escapeHtml(p.sourceUrl)}" target="_blank" rel="noopener">Source ↗</a>` : '';
+      const imageHtml = p.image ? `<img class="dispatch-photo" src="${escapeHtml(p.image)}" alt="${escapeHtml(p.title)}" loading="lazy" onerror="this.style.display='none'">` : '';
       return `
         <div class="card ${categorySlug(p.category)}" data-id="${p.id}">
+          ${imageHtml}
           <span class="stamp">${escapeHtml(p.category)}</span>
           <h2>${escapeHtml(p.title)}</h2>
           <div class="byline">By ${escapeHtml(p.author || 'Staff')} · ${dateStr}</div>
           <div class="content collapsed" id="content-${p.id}">${escapeHtml(p.content)}${sourceHtml}</div>
           <div class="card-footer">
             <button class="read-more" data-id="${p.id}">Read full report ↓</button>
-            <button class="delete-btn" data-id="${p.id}">Remove</button>
           </div>
         </div>`;
     }).join('');
@@ -351,62 +301,11 @@
         btn.textContent = collapsed ? 'Read full report ↓' : 'Collapse ↑';
       });
     });
-    feedEl.querySelectorAll('.delete-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        if(!confirm('Remove this dispatch from the local list? Download posts.json again afterward to publish the removal.')) return;
-        posts = posts.filter(p => String(p.id) !== String(btn.dataset.id));
-        render();
-      });
-    });
   }
-
-  newBtn.addEventListener('click', () => {
-    formPanel.classList.add('open');
-    document.getElementById('f-title').focus();
-  });
-  cancelBtn.addEventListener('click', () => { formPanel.classList.remove('open'); clearForm(); });
-
-  function clearForm(){
-    document.getElementById('f-title').value = '';
-    document.getElementById('f-author').value = '';
-    document.getElementById('f-content').value = '';
-    document.getElementById('f-source').value = '';
-    document.getElementById('f-category').selectedIndex = 0;
-    errEl.style.display = 'none';
-    successEl.style.display = 'none';
-  }
-
-  saveBtn.addEventListener('click', () => {
-    const title = document.getElementById('f-title').value.trim();
-    const category = document.getElementById('f-category').value;
-    const author = document.getElementById('f-author').value.trim();
-    const content = document.getElementById('f-content').value.trim();
-    const sourceUrl = document.getElementById('f-source').value.trim();
-
-    errEl.style.display = 'none';
-    successEl.style.display = 'none';
-
-    if(!title || !content){
-      errEl.textContent = 'A headline and the report text are required.';
-      errEl.style.display = 'block';
-      return;
-    }
-
-    posts.push({
-      id: Date.now().toString(36) + Math.random().toString(36).slice(2,7),
-      title, category, author, content, sourceUrl,
-      date: new Date().toISOString()
-    });
-
-    downloadPostsJson();
-    successEl.textContent = 'Downloaded posts.json. Upload it to your GitHub repo (replace the existing file) and commit to publish this on your live site.';
-    successEl.style.display = 'block';
-    activeFilter = 'All';
-    render();
-  });
 
   loadPosts();
 })();
 </script>
 </body>
 </html>
+
