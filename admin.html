@@ -183,6 +183,14 @@
     <div class="section-label">Current dispatches</div>
     <div id="post-list"></div>
 
+    <div class="card" style="margin-top:24px;">
+      <div class="hint">If a link on your site ever 404s (like a post page missing), click this to regenerate every post's page, the homepage, and the sitemap from scratch — safe to run anytime, it won't lose any post data.</div>
+      <div class="actions" style="justify-content:flex-start;">
+        <button class="btn-secondary" id="rebuild-btn">🔧 Rebuild all pages</button>
+      </div>
+      <div id="rebuild-status" style="margin-top:10px;"></div>
+    </div>
+
     <a class="back-link" href="index.html">← Back to public site</a>
   </div>
 </div>
@@ -313,13 +321,15 @@
         if(m) maxN = Math.max(maxN, parseInt(m[1], 10));
       }
     });
+    const newlyAssigned = [];
     allPosts.forEach((p, i) => {
       if(!p.page){
         maxN += 1;
         p.page = `post-${maxN}.html`;
+        newlyAssigned.push(p);
       }
     });
-    return allPosts;
+    return newlyAssigned;
   }
 
   function categoryClass(cat){
@@ -531,18 +541,21 @@ ${cards}
     return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join('\n')}\n</urlset>`;
   }
 
-  // Publishes everything a new post needs: its data, its own page,
+  // Publishes everything needed: post data, a page for every post that
+  // doesn't have one yet (handles catching up multiple at once safely),
   // the regenerated homepage, and the regenerated sitemap.
   async function publishEverything(allPostsWithNew){
-    assignPageFilenames(allPostsWithNew);
-    const newPost = allPostsWithNew[allPostsWithNew.length - 1];
+    const newlyAssigned = assignPageFilenames(allPostsWithNew);
 
     // 1. posts.json
     const { sha: postsSha } = await githubGetRaw('posts.json');
     await githubPutRaw('posts.json', JSON.stringify(allPostsWithNew, null, 2), postsSha, 'Update posts.json via admin panel');
 
-    // 2. this post's own page (new file, no sha)
-    await githubPutRaw(newPost.page, buildPostPageHtml(newPost), null, `Add page for "${newPost.title}"`);
+    // 2. a page for every post that just got a filename assigned (could be
+    //    more than one, e.g. catching up posts that never got a page before)
+    for(const p of newlyAssigned){
+      await githubPutRaw(p.page, buildPostPageHtml(p), null, `Add page for "${p.title}"`);
+    }
 
     // 3. regenerated homepage
     const { sha: indexSha } = await githubGetRaw('index.html');
@@ -553,6 +566,35 @@ ${cards}
     await githubPutRaw('sitemap.xml', buildSitemapXml(allPostsWithNew), sitemapSha, 'Regenerate sitemap with all posts');
 
     return allPostsWithNew;
+  }
+
+  // Regenerates a page for EVERY post (upsert: creates if missing, updates
+  // if it exists), plus homepage and sitemap. Fixes any post whose page was
+  // referenced but never actually written.
+  async function rebuildAllPages(statusEl){
+    const { content: livePosts } = await githubGetFile();
+    assignPageFilenames(livePosts); // fills in "page" for any post missing one, without renumbering existing ones
+
+    for(let i = 0; i < livePosts.length; i++){
+      const p = livePosts[i];
+      statusEl.textContent = `Rebuilding ${i+1}/${livePosts.length}: ${p.page}…`;
+      const { sha } = await githubGetRaw(p.page);
+      await githubPutRaw(p.page, buildPostPageHtml(p), sha, `Rebuild page for "${p.title}"`);
+    }
+
+    statusEl.textContent = 'Rebuilding posts.json…';
+    const { sha: postsSha } = await githubGetRaw('posts.json');
+    await githubPutRaw('posts.json', JSON.stringify(livePosts, null, 2), postsSha, 'Rebuild: sync posts.json page assignments');
+
+    statusEl.textContent = 'Rebuilding homepage…';
+    const { sha: indexSha } = await githubGetRaw('index.html');
+    await githubPutRaw('index.html', buildIndexHtml(livePosts), indexSha, 'Rebuild: regenerate homepage');
+
+    statusEl.textContent = 'Rebuilding sitemap…';
+    const { sha: sitemapSha } = await githubGetRaw('sitemap.xml');
+    await githubPutRaw('sitemap.xml', buildSitemapXml(livePosts), sitemapSha, 'Rebuild: regenerate sitemap');
+
+    return livePosts;
   }
 
   let posts = [];
@@ -607,7 +649,10 @@ ${cards}
           try{
             const {content} = await githubGetFile();
             const updated = content.filter(p => String(p.id) !== String(btn.dataset.id));
-            assignPageFilenames(updated);
+            const newlyAssigned = assignPageFilenames(updated);
+            for(const p of newlyAssigned){
+              await githubPutRaw(p.page, buildPostPageHtml(p), null, `Add page for "${p.title}"`);
+            }
             const { sha: postsSha } = await githubGetRaw('posts.json');
             await githubPutRaw('posts.json', JSON.stringify(updated, null, 2), postsSha, 'Remove a dispatch via admin panel');
             const { sha: indexSha } = await githubGetRaw('index.html');
@@ -637,6 +682,26 @@ ${cards}
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   }
+
+  document.getElementById('rebuild-btn').addEventListener('click', async () => {
+    const gh = getGh();
+    const statusEl = document.getElementById('rebuild-status');
+    if(!gh || !gh.owner || !gh.repo || !gh.token){
+      statusEl.textContent = 'Connect GitHub above first.';
+      return;
+    }
+    const rebuildBtn = document.getElementById('rebuild-btn');
+    rebuildBtn.disabled = true;
+    try{
+      const finalPosts = await rebuildAllPages(statusEl);
+      posts = finalPosts;
+      statusEl.textContent = '✓ Done. Every post now has a real page, and the homepage + sitemap are in sync.';
+      renderList();
+    }catch(e){
+      statusEl.textContent = 'Rebuild failed: ' + e.message;
+    }
+    rebuildBtn.disabled = false;
+  });
 
   document.getElementById('clear-btn').addEventListener('click', clearForm);
   function clearForm(){
